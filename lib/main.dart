@@ -4,7 +4,9 @@ import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() => runApp(const OmniScannerApp());
+void main() {
+  runApp(const OmniScannerApp());
+}
 
 class OmniScannerApp extends StatefulWidget {
   const OmniScannerApp({super.key});
@@ -13,38 +15,42 @@ class OmniScannerApp extends StatefulWidget {
 }
 
 class _OmniScannerAppState extends State<OmniScannerApp> {
-  String _lang = 'EN';
-  bool _isPro = false;
+  String lang = 'EN';
+  bool isPro = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPrefs();
+    loadPrefs();
   }
 
-  Future<void> _loadPrefs() async {
+  Future<void> loadPrefs() async {
     final p = await SharedPreferences.getInstance();
     setState(() {
-      _lang = p.getString('lang') ?? 'EN';
-      _isPro = p.getBool('pro') ?? false;
+      lang = p.getString('lang') ?? 'EN';
+      isPro = p.getBool('pro') ?? false;
     });
   }
 
-  Future<void> _setLang(String v) async {
+  Future<void> changeLang(String v) async {
     final p = await SharedPreferences.getInstance();
     await p.setString('lang', v);
-    setState(() => _lang = v);
+    setState(() {
+      lang = v;
+    });
   }
 
-  Future<void> _setPro() async {
+  Future<void> unlockPro() async {
     final p = await SharedPreferences.getInstance();
     await p.setBool('pro', true);
-    setState(() => _isPro = true);
+    setState(() {
+      isPro = true;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final rtl = _lang == 'FA' || _lang == 'AR';
+    final rtl = lang == 'FA' || lang == 'AR';
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'OmniScanner Pro',
@@ -52,27 +58,29 @@ class _OmniScannerAppState extends State<OmniScannerApp> {
         scaffoldBackgroundColor: const Color(0xFF070A0E),
         primaryColor: const Color(0xFF00E676),
       ),
-      builder: (c, w) => Directionality(
-        textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
-        child: w!,
-      ),
-      home: HomePage(
-        lang: _lang,
-        isPro: _isPro,
-        onLang: _setLang,
-        onPro: _setPro,
+      builder: (context, child) {
+        return Directionality(
+          textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
+          child: child!,
+        );
+      },
+      home: DashboardScreen(
+        lang: lang,
+        isPro: isPro,
+        onLang: changeLang,
+        onPro: unlockPro,
       ),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
+class DashboardScreen extends StatefulWidget {
   final String lang;
   final bool isPro;
   final Function(String) onLang;
   final VoidCallback onPro;
 
-  const HomePage({
+  const DashboardScreen({
     super.key,
     required this.lang,
     required this.isPro,
@@ -81,73 +89,59 @@ class HomePage extends StatefulWidget {
   });
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _HomePageState extends State<HomePage> {
-  List<Map<String, dynamic>> _items = [];
-  String _biz = 'Supermarket';
-
-  final Map<String, String> _langs = const {
-    'EN': 'EN 🇺🇸',
-    'DE': 'DE 🇩🇪',
-    'FA': 'FA 🇮🇷',
-    'AR': 'AR 🇸🇦',
-    'TR': 'TR 🇹🇷',
-    'FR': 'FR 🇫🇷',
-    'ES': 'ES 🇪🇸',
-    'RU': 'RU 🇷🇺',
-  };
+class _DashboardScreenState extends State<DashboardScreen> {
+  List<Map<String, dynamic>> items = [];
+  String business = 'Supermarket';
 
   @override
   void initState() {
     super.initState();
-    _load();
+    loadItems();
   }
 
-  Future<void> _load() async {
+  Future<void> loadItems() async {
     final p = await SharedPreferences.getInstance();
-    final raw = p.getStringList('items_db') ?? [];
+    final list = p.getStringList('db_items') ?? [];
     setState(() {
-      _items = raw.map((e) => Map<String, dynamic>.from(jsonDecode(e))).toList();
+      items = list.map((e) => Map<String, dynamic>.from(jsonDecode(e))).toList();
     });
   }
 
-  Future<void> _save() async {
+  Future<void> saveItems() async {
     final p = await SharedPreferences.getInstance();
-    await p.setStringList('items_db', _items.map((e) => jsonEncode(e)).toList());
+    final list = items.map((e) => jsonEncode(e)).toList();
+    await p.setStringList('db_items', list);
   }
 
-  Future<String> _findName(String code) async {
+  Future<String> fetchProductName(String barcode) async {
     try {
-      final r = await http
-          .get(Uri.parse('https://openfoodfacts.org'))
-          .timeout(const Duration(seconds: 4));
-      if (r.statusCode == 200) {
-        final d = jsonDecode(r.body);
-        if (d['status'] == 1) {
-          return d['product']?['product_name']?.toString() ?? '';
+      final uri = Uri.parse('https://openfoodfacts.org' + barcode + '.json');
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data['status'] == 1 && data['product'] != null) {
+          return data['product']['product_name']?.toString() ?? '';
         }
       }
     } catch (_) {}
     return '';
   }
 
-  String _txt(String k) {
-    const m = {
+  String tr(String key) {
+    const dict = {
       'scan': {'EN': 'START LIVE SCAN', 'DE': 'LIVE-SCAN STARTEN', 'FA': 'شروع اسکن زنده'},
       'inv': {'EN': 'Smart Inventory', 'DE': 'Intelligentes Lager', 'FA': 'انبار هوشمند'},
       'shop': {'EN': 'Shopping List', 'DE': 'Einkaufsliste', 'FA': 'لیست خرید'},
       'save': {'EN': 'Save Offline', 'DE': 'Offline speichern', 'FA': 'ذخیره آفلاین'},
     };
-    return m[k]?[widget.lang] ?? m[k]?['EN'] ?? k;
+    return dict[key]?[widget.lang] ?? dict[key]?['EN'] ?? key;
   }
 
   @override
   Widget build(BuildContext context) {
-    final inv = _items.where((x) => x['shop'] != true).toList();
-    final shop = _items.where((x) => x['shop'] == true).toList();
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0E131A),
@@ -157,16 +151,21 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           DropdownButton<String>(
-            value: _langs.containsKey(widget.lang) ? widget.lang : 'EN',
+            value: widget.lang,
             underline: const SizedBox(),
-            items: _langs.entries
-                .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-                .toList(),
+            items: const [
+              DropdownMenuItem(value: 'EN', child: Text('EN')),
+              DropdownMenuItem(value: 'DE', child: Text('DE')),
+              DropdownMenuItem(value: 'FA', child: Text('FA')),
+              DropdownMenuItem(value: 'AR', child: Text('AR')),
+              DropdownMenuItem(value: 'TR', child: Text('TR')),
+              DropdownMenuItem(value: 'FR', child: Text('FR')),
+            ],
             onChanged: (v) {
               if (v != null) widget.onLang(v);
             },
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
         ],
       ),
       body: Padding(
@@ -178,13 +177,16 @@ class _HomePageState extends State<HomePage> {
               children: [
                 Expanded(
                   child: DropdownButton<String>(
-                    value: _biz,
+                    value: business,
                     isExpanded: true,
-                    items: const ['Supermarket', 'Pharmacy', 'Cosmetics', 'Warehouse']
-                        .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-                        .toList(),
+                    items: const [
+                      DropdownMenuItem(value: 'Supermarket', child: Text('Supermarket')),
+                      DropdownMenuItem(value: 'Pharmacy', child: Text('Pharmacy')),
+                      DropdownMenuItem(value: 'Cosmetics', child: Text('Cosmetics')),
+                      DropdownMenuItem(value: 'Warehouse', child: Text('Warehouse')),
+                    ],
                     onChanged: (v) {
-                      if (v != null) setState(() => _biz = v);
+                      if (v != null) setState(() => business = v);
                     },
                   ),
                 ),
@@ -194,8 +196,8 @@ class _HomePageState extends State<HomePage> {
                     backgroundColor: widget.isPro ? const Color(0xFF00E676) : Colors.amber,
                     foregroundColor: Colors.black,
                   ),
-                  onPressed: _proModal,
-                  child: Text(widget.isPro ? 'PRO ACTIVE' : 'GO PRO \$5'),
+                  onPressed: showProModal,
+                  child: Text(widget.isPro ? 'PRO ACTIVE' : 'GO PRO 5 USD'),
                 ),
               ],
             ),
@@ -207,48 +209,49 @@ class _HomePageState extends State<HomePage> {
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),
               icon: const Icon(Icons.camera_alt, size: 26),
-              label: Text(_txt('scan'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              label: Text(tr('scan'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               onPressed: () async {
                 final code = await Navigator.push<String>(
                   context,
-                  MaterialPageRoute(builder: (_) => const ScannerView()),
+                  MaterialPageRoute(builder: (_) => const BarcodeCameraScreen()),
                 );
                 if (!mounted) return;
-                final autoName = (code != null && code.isNotEmpty) ? await _findName(code) : '';
+                final autoName = (code != null && code.isNotEmpty) ? await fetchProductName(code) : '';
                 if (!mounted) return;
-                _addForm(code: code ?? '', name: autoName, isShop: false);
+                openProductForm(code: code ?? '', name: autoName, isShop: false);
               },
             ),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('${_txt('inv')} (${inv.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(tr('inv') + ' (' + items.length.toString() + ')', style: const TextStyle(fontWeight: FontWeight.bold)),
                 TextButton(
-                  onPressed: () => _addForm(isShop: true),
-                  child: Text('+ ${_txt('shop')} (${shop.length})', style: const TextStyle(color: Color(0xFF00B0FF))),
+                  onPressed: () => openProductForm(isShop: true),
+                  child: Text('+ ' + tr('shop'), style: const TextStyle(color: Color(0xFF00B0FF))),
                 ),
               ],
             ),
             Expanded(
               child: ListView.builder(
-                itemCount: _items.length,
-                itemBuilder: (c, i) {
-                  final it = _items[i];
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final it = items[index];
                   final exp = DateTime.tryParse(it['exp'] ?? '') ?? DateTime.now();
                   final days = exp.difference(DateTime.now()).inDays;
                   final col = days < 0 ? Colors.redAccent : (days <= 14 ? Colors.orangeAccent : const Color(0xFF00E676));
+                  final expStr = exp.year.toString() + '-' + exp.month.toString() + '-' + exp.day.toString();
                   return Card(
                     color: const Color(0xFF121822),
                     child: ListTile(
                       leading: Icon(it['shop'] == true ? Icons.shopping_cart : Icons.inventory, color: col),
-                      title: Text('${it['name']} (${it['size']})'),
-                      subtitle: Text('Code: ${it['code']} • Exp: ${exp.year}-${exp.month}-${exp.day}'),
+                      title: Text(it['name'].toString() + ' (' + it['size'].toString() + ')'),
+                      subtitle: Text('Code: ' + it['code'].toString() + ' | Exp: ' + expStr),
                       trailing: IconButton(
                         icon: const Icon(Icons.delete, color: Colors.redAccent),
                         onPressed: () {
-                          setState(() => _items.removeAt(i));
-                          _save();
+                          setState(() => items.removeAt(index));
+                          saveItems();
                         },
                       ),
                     ),
@@ -262,10 +265,10 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _addForm({String code = '', String name = '', bool isShop = false}) {
-    final nCtrl = TextEditingController(text: name);
-    final cCtrl = TextEditingController(text: code);
-    final sCtrl = TextEditingController();
+  void openProductForm({String code = '', String name = '', bool isShop = false}) {
+    final nameCtrl = TextEditingController(text: name);
+    final codeCtrl = TextEditingController(text: code);
+    final sizeCtrl = TextEditingController();
     DateTime exp = DateTime.now().add(const Duration(days: 30));
 
     showModalBottomSheet(
@@ -273,15 +276,6 @@ class _HomePageState extends State<HomePage> {
       isScrollControlled: true,
       backgroundColor: const Color(0xFF121822),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => Padding(
-          padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nCtrl, decoration: const InputDecoration(labelText: 'Product Name')),
-              TextField(controller: cCtrl, decoration: const InputDecoration(labelText: 'Barcode')),
-              TextField(controller: sCtrl, decoration: const InputDecoration(labelText: 'Size / Weight')),
-              ListTile(
-                title: Text('Expiry: ${exp.year}-${exp.month}-${exp.day}'),
-                trailing: const Icon(Icons.calendar_today, color: Color(0xFF00E676)),
-                onTap: () async {
+        builder: (ctx, setModalState) {
+          final expText = 'Expiry: ' + exp.year.toString() + '-' + exp.month.toString() + '-' + exp.day.toString();
+          return Padding(
