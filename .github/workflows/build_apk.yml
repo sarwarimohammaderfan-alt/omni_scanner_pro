@@ -18,11 +18,178 @@ jobs:
           flutter-version: '3.27.4'
           channel: 'stable'
       - run: flutter create --org com.omniscanner --project-name omni_scanner_pro .
+      - run: flutter pub add mobile_scanner shared_preferences http
       - run: sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/g' android/app/build.gradle.kts || sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/g' android/app/build.gradle
       - run: sed -i 's/<application/<uses-permission android:name="android.permission.CAMERA"\/><uses-permission android:name="android.permission.INTERNET"\/><application/g' android/app/src/main/AndroidManifest.xml
-      - run: flutter pub get
-      - run: flutter build apk --release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OmniScannerPro-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+      - run: |
+          python3 -c '
+          import urllib.request
+          code = """import "dart:convert";
+          import "package:flutter/material.dart";
+          import "package:http/http.dart" as http;
+          import "package:mobile_scanner/mobile_scanner.dart";
+          import "package:shared_preferences/shared_preferences.dart";
+
+          void main() => runApp(const OmniApp());
+
+          class OmniApp extends StatefulWidget {
+            const OmniApp({super.key});
+            @override
+            State<OmniApp> createState() => _OmniAppState();
+          }
+
+          class _OmniAppState extends State<OmniApp> {
+            String lang = "EN";
+            bool pro = false;
+            @override
+            void initState() { super.initState(); load(); }
+            Future<void> load() async {
+              final p = await SharedPreferences.getInstance();
+              setState(() { lang = p.getString("lang") ?? "EN"; pro = p.getBool("pro") ?? false; });
+            }
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark().copyWith(scaffoldBackgroundColor: const Color(0xFF070A0E)),
+                home: HomeScreen(
+                  lang: lang,
+                  pro: pro,
+                  onLang: (v) async { final p = await SharedPreferences.getInstance(); await p.setString("lang", v); setState(() => lang = v); },
+                  onPro: () async { final p = await SharedPreferences.getInstance(); await p.setBool("pro", true); setState(() => pro = true); },
+                ),
+              );
+            }
+          }
+
+          class HomeScreen extends StatefulWidget {
+            final String lang;
+            final bool pro;
+            final Function(String) onLang;
+            final VoidCallback onPro;
+            const HomeScreen({super.key, required this.lang, required this.pro, required this.onLang, required this.onPro});
+            @override
+            State<HomeScreen> createState() => _HomeScreenState();
+          }
+
+          class _HomeScreenState extends State<HomeScreen> {
+            List<Map<String, dynamic>> items = [];
+            String biz = "Supermarket";
+            @override
+            void initState() { super.initState(); load(); }
+            Future<void> load() async {
+              final p = await SharedPreferences.getInstance();
+              final l = p.getStringList("items") ?? [];
+              setState(() => items = l.map((e) => Map<String, dynamic>.from(jsonDecode(e))).toList());
+            }
+            Future<void> save() async {
+              final p = await SharedPreferences.getInstance();
+              await p.setStringList("items", items.map((e) => jsonEncode(e)).toList());
+            }
+            Future<String> lookup(String code) async {
+              try {
+                final r = await http.get(Uri.parse("https://openfoodfacts.org" + code + ".json")).timeout(const Duration(seconds: 4));
+                if (r.statusCode == 200) {
+                  final d = jsonDecode(r.body);
+                  if (d["status"] == 1) return d["product"]?["product_name"]?.toString() ?? "";
+                }
+              } catch (_) {}
+              return "";
+            }
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: const Color(0xFF0E131A),
+                  title: const Text("OmniScanner Pro", style: TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.bold)),
+                  actions: [
+                    DropdownButton<String>(
+                      value: widget.lang,
+                      underline: const SizedBox(),
+                      items: ["EN", "DE", "FA", "AR", "TR", "FR"].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                      onChanged: (v) { if (v != null) widget.onLang(v); },
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ),
+                body: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButton<String>(
+                              value: biz,
+                              isExpanded: true,
+                              items: ["Supermarket", "Pharmacy", "Cosmetics", "Warehouse"].map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                              onChanged: (v) { if (v != null) setState(() => biz = v); },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: widget.pro ? const Color(0xFF00E676) : Colors.amber, foregroundColor: Colors.black),
+                            onPressed: () { widget.onPro(); },
+                            child: Text(widget.pro ? "PRO ACTIVE" : "GO PRO 5 USD"),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676), foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16)),
+                        icon: const Icon(Icons.camera_alt, size: 26),
+                        label: const Text("START LIVE SCAN", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                        onPressed: () async {
+                          final code = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ScanPage()));
+                          if (!mounted) return;
+                          final name = (code != null && code.isNotEmpty) ? await lookup(code) : "";
+                          if (!mounted) return;
+                          addSheet(code ?? "", name);
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: items.length,
+                          itemBuilder: (c, i) {
+                            final it = items[i];
+                            return Card(
+                              color: const Color(0xFF121822),
+                              child: ListTile(
+                                leading: const Icon(Icons.inventory, color: Color(0xFF00E676)),
+                                title: Text(it["name"].toString() + " (" + it["size"].toString() + ")"),
+                                subtitle: Text("Code: " + it["code"].toString() + " | Exp: " + it["exp"].toString()),
+                                trailing: IconButton(icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: () { setState(() => items.removeAt(i)); save(); }),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+            void addSheet(String code, String name) {
+              final nc = TextEditingController(text: name);
+              final cc = TextEditingController(text: code);
+              final sc = TextEditingController();
+              DateTime exp = DateTime.now().add(const Duration(days: 30));
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: const Color(0xFF121822),
+                builder: (ctx) => StatefulBuilder(
+                  builder: (ctx, setS) => Padding(
+                    padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(controller: nc, decoration: const InputDecoration(labelText: "Product Name")),
+                        TextField(controller: cc, decoration: const InputDecoration(labelText: "Barcode")),
+                        TextField(controller: sc, decoration: const InputDecoration(labelText: "Size / Weight")),
+                        ListTile(
+                          title: Text("Expiry: " + exp.year.toString() + "-" + exp.month.toString() + "-" + exp.day.toString()),
+                          trailing: const Icon(Icons.calendar_today, color: Color(0xFF00E676)),
+                          onTap: () async {
